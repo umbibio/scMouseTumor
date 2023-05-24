@@ -15,65 +15,78 @@ trans.time <- readRDS( '../../data/input/rds/trans_time.rds')
 
 length(unique(spline.fits$GeneID))
 
-gene.set1 <- read.xlsx('../Input/Ap2Review/Josh/lp2tumor_files/upTumorvLP.xlsx')
-gene.set2 <- read.xlsx('../Input/Ap2Review/Josh/lp2tumor_files/upRS_LPvLP.xlsx')
 
-gene.set1 <- gene.set1 %>% dplyr::filter(abs(avg_log2FC) > log2(1.5) & p_val_adj < 0.01)
-gene.set2 <- gene.set2 %>% dplyr::filter(abs(avg_log2FC) > log2(1.5) & p_val_adj < 0.01)
+## Combining all
+RS_LP.vs.LP$contrast <- 'RS-LP.vs.LP'
+Tumor.vs.RS_LP$contrast <- 'Tumor.vs.RS-LP'
+RS_LP.vs.B$contrast <- 'RS-LP.vs.B'
 
-sig.genes <- unique(c(gene.set1$GeneID, gene.set2$GeneID))
+marker.genes <- bind_rows(RS_LP.vs.LP, Tumor.vs.RS_LP, RS_LP.vs.B)
 
-spline.fits.filt <- spline.fits %>% dplyr::filter(GeneID %in% sig.genes)
-dtw.wide <- spline.fits.filt %>% 
+
+## Turn the data into wide format (time by gene) and center & scale each gene
+sc.rna.dtw.wide <- spline.fits %>% 
   pivot_wider(names_from = 'GeneID', values_from = 'y') %>% 
-  mutate_at(vars(!matches("^x$")), ~scale(., center = T, scale = T)) %>%
+  mutate_at(vars(-1), scale) %>%
   as.data.frame()
 
 
-mu.scale <- dtw.wide %>% 
+sc.rna.mu.scale <- sc.rna.dtw.wide %>% 
   pivot_longer(-x, names_to = 'GeneID', values_to = 'expr')
 
+sc.rna.mu.scale <- sc.rna.mu.scale[!is.na(sc.rna.mu.scale$expr), ]
 
-dtw.wide.no.scale <- spline.fits.filt %>% 
-  pivot_wider(names_from = 'GeneID', values_from = 'y') %>% 
-  mutate_at(vars(!matches("^x$")), ~scale(., center = F, scale = F)) %>%
-  as.data.frame()
+## Look at Marker genes only (no down genes)
+#sc.rna.mu.scale <- sc.rna.mu.scale %>% dplyr::filter(GeneID %in% marker.genes$GeneID)
+## GGplot cluster graphs
+my.TFs <- c('Mybl2',
+            'Foxm1',
+            'Lmnb1',
+            'E2f1',
+            'E2f7',
+            'Ezh2',
+            'Fosl1',
+            'Tp63',
+            'Znf750')
 
-
-mu.no.scale <- dtw.wide.no.scale %>% 
-  pivot_longer(-x, names_to = 'GeneID', values_to = 'expr')
 
 ## Clustering IMCs
+active.TFs <- read.xlsx('../../data/output/CIE/all_active_TFs.xlsx')
+mourse.TFs <- tolower(active.TFs$name)
+firstup <- function(x) {
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+mourse.TFs <- firstup(mourse.TFs)
 
-k <- 6
-clust.mat <- dtw.wide[,colnames(dtw.wide) %in%  sig.genes]
+k <- 3
+clust.mat <- sc.rna.dtw.wide[,colnames(sc.rna.dtw.wide) %in%  unique(sc.rna.mu.scale$GeneID)]
+clust.mat.Tfs <- sc.rna.dtw.wide[,colnames(sc.rna.dtw.wide) %in%  unique(mourse.TFs)]
+clust.mat.Tfs <- sc.rna.dtw.wide[,colnames(sc.rna.dtw.wide) %in%  my.TFs]
+
 hc_dtw <- dtwClustCurves(clust.mat, nclust = k)
+hc_dtw.TFs <- dtwClustCurves(clust.mat.Tfs, nclust = k)
 
 plot(hc_dtw, type = 'sc')
+plot(hc_dtw.TFs, type = 'sc')
+
+
 
 
 ## GGplot cluster graphs
-dat.long <- mu.no.scale
+dat.long <- sc.rna.mu.scale %>% dplyr::filter(GeneID %in% my.TFs)
 dat.long <- dat.long %>% 
   transmute(time = x, GeneID = GeneID, normExpr = expr)
 
-clust.info <- data.frame(GeneID = colnames(clust.mat), cluster = cutree(hc_dtw, k = k))
+clust.info <- data.frame(GeneID = colnames(clust.mat.Tfs), cluster = cutree(hc_dtw.TFs, k = k))
 
 long.clust <- left_join(dat.long, clust.info, by = 'GeneID')
 long.clust.tab <- long.clust %>% dplyr::select(GeneID, cluster) %>% distinct()
-write.xlsx(long.clust.tab, '../Input/Ap2Review/Josh/out/cluster_sig_genes.xlsx')
+#write.xlsx(long.clust.tab, '../../data/output/tables/cluster_sig_genes.xlsx')
 
 long.clust$label <- NA
 long.clust$label[which(long.clust$time == 0.5)] <- long.clust$GeneID[which(long.clust$time == 0.5)]
 
-# sc.rna.sc.atac.joint.long$label <- NA
-# AP2s.clusts <- sc.rna.sc.atac.joint.long %>% group_by(Name) %>% summarise(cluster.RNA = cluster.RNA[1]) %>% 
-#   ungroup() %>% group_by(cluster.RNA) %>% mutate(lab.time = 1:n() %% 6)
-# 
-# sc.rna.sc.atac.joint.long$lab.time <- floor(sc.rna.sc.atac.joint.long$time) 
-# sc.rna.sc.atac.joint.long <- left_join(sc.rna.sc.atac.joint.long, AP2s.clusts, by = c('Name', 'lab.time', 'cluster.RNA'))
-# sc.rna.sc.atac.joint.long$label[sc.rna.sc.atac.joint.long$time == sc.rna.sc.atac.joint.long$lab.time] <-
-#   sc.rna.sc.atac.joint.long$Name[sc.rna.sc.atac.joint.long$time == sc.rna.sc.atac.joint.long$lab.time]
 
 long.clust$cluster <- paste('C', long.clust$cluster, sep = '')
 long.clust$cluster <- factor(long.clust$cluster, levels = unique(sort(long.clust$cluster)))
@@ -82,7 +95,7 @@ p  <- ggplot(long.clust, aes(x= time,y=normExpr)) +
   geom_path(aes(color = GeneID),alpha = 0.8, size = 0.8)+ 
   theme_bw(base_size = 16) +
   theme(legend.position = "right") +
-  ylab('normExpr') + xlab('Time') + ylim(c(0, 5)) + 
+  ylab('normExpr') + xlab('Time') + #+ ylim(c(0, 5)) + 
   theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 18, face="bold")) +
   theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 18, face="bold")) +
   theme(strip.background = element_rect(colour="black", fill="gray90",

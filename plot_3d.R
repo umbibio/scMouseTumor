@@ -1,9 +1,7 @@
 library(plotly)
 library(Seurat)
 library(tidyverse)
-library(SeuratWrappers)
 library(openxlsx)
-library(slingshot)
 
 
 source('./util_funcs.R')
